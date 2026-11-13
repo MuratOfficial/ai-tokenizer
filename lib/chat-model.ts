@@ -77,6 +77,38 @@ export type Match = {
 };
 export type ActiveAnswer = { text: string; tokens: number[]; weight: number };
 
+/** Признак текста (основа слова или слово целиком) и его важность */
+export type Feature = { name: string; weight: number };
+
+/** Как посчитана оценка одного вопроса из примеров */
+export type SearchRow = {
+  question: string;
+  /** Совпавшие признаки */
+  common: Feature[];
+  /** Сумма квадратов весов совпавших признаков */
+  dot: number;
+  /** «Длина» вопроса из примеров */
+  qNorm: number;
+  /** Сходство = dot / (длина сообщения × длина вопроса) */
+  sim: number;
+  bonus: number;
+  bonusWhy: string;
+  /** Итоговая оценка = сходство + бонус */
+  score: number;
+  /** Вес ответов этой группы = оценка² */
+  weight: number;
+  chosen: boolean;
+  reply: boolean;
+};
+
+/** Расчёт поиска похожих вопросов — для показа в панели */
+export type Search = {
+  features: Feature[];
+  /** «Длина» сообщения: корень из суммы квадратов весов признаков */
+  uNorm: number;
+  rows: SearchRow[];
+};
+
 export type Retrieval = {
   userTokens: Tok[];
   matches: Match[];
@@ -87,11 +119,14 @@ export type Retrieval = {
   memory: Memory;
   /** Как память повлияла на ответ — для показа в панели */
   used: string[];
+  search: Search;
 };
 
 export type Candidate = {
   id: number;
   text: string;
+  /** Сумма весов ответов, где этот токен шёл после контекста */
+  weight: number;
   /** Вероятность, 0..1 (уже с учётом температуры) */
   prob: number;
   /** Сколько раз токен шёл после такого контекста в похожих ответах */
@@ -107,6 +142,10 @@ export type Step = {
   context: Tok[];
   /** Кандидаты, от самого вероятного */
   cands: Candidate[];
+  /** Сумма весов всех кандидатов: вероятность до температуры = вес / total */
+  total: number;
+  /** Температура, с которой считались вероятности */
+  temp: number;
   /** Индекс выбранного кандидата */
   picked?: number;
 };
@@ -223,6 +262,19 @@ function similarity(model: Model, st: string[], stNorm: number, q: Question) {
   return dot / (stNorm * q.norm);
 }
 
+/** То же сходство, но с подробностями: какие признаки совпали */
+function compare(model: Model, st: string[], stNorm: number, q: Question) {
+  const common: Feature[] = [];
+  let dot = 0;
+  for (const s of q.stems) {
+    if (!st.includes(s)) continue;
+    const weight = weightOf(model, s);
+    common.push({ name: s, weight });
+    dot += weight ** 2;
+  }
+  return { common, dot, sim: stNorm && q.norm ? dot / (stNorm * q.norm) : 0 };
+}
+
 /** Все ли символы знакомы модели (иначе текст нельзя будет собрать из токенов) */
 function known(model: Model, text: string) {
   return Array.from(text).every((ch) => model.charIds.has(ch));
@@ -279,7 +331,19 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
 
   const scored = model.groups
     .map((group) => {
-      const result = { group, question: "", score: 0, reply: false, topicHelped: false };
+      const result = {
+        group,
+        question: "",
+        score: 0,
+        reply: false,
+        topicHelped: false,
+        common: [] as Feature[],
+        dot: 0,
+        qNorm: 0,
+        sim: 0,
+        bonus: 0,
+        bonusWhy: "",
+      };
       if (group.lacks && memory[group.lacks]) return result;
       if (group.after && group.after !== pending?.tag) return result;
       if (group.when === "newName" && !newName) return result;
@@ -288,10 +352,14 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
       let sim = 0;
       let topicSim = 0;
       for (const q of group.questions) {
-        const s = similarity(model, us, uNorm, q);
-        if (s > sim) {
-          sim = s;
+        const c = compare(model, us, uNorm, q);
+        if (c.sim > sim) {
+          sim = c.sim;
           result.question = q.text;
+          result.common = c.common;
+          result.dot = c.dot;
+          result.qNorm = q.norm;
+          result.sim = c.sim;
         }
         topicSim = Math.max(topicSim, similarity(model, topic, topicNorm, q));
       }
@@ -302,12 +370,20 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
           // Сообщение с вопросительным знаком — скорее новый вопрос, чем ответ
           result.score = text.includes("?") ? ANY_REPLY_SCORE / 2 : ANY_REPLY_SCORE;
           result.question = "любой ответ";
+          result.bonus = result.score;
+          result.bonusWhy = text.includes("?")
+            ? "подходит любой ответ на вопрос модели, но в сообщении есть «?»"
+            : "подходит любой ответ на вопрос модели";
         } else if (sim > 0) {
           result.score = sim + AFTER_BONUS;
+          result.bonus = AFTER_BONUS;
+          result.bonusWhy = "это ответ на вопрос модели";
         }
       } else if (sim >= 0.2) {
         // Прошлое сообщение помогает понять, о чём речь: «а зачем они нужны?»
-        result.score = sim + TOPIC_BONUS * topicSim;
+        result.bonus = TOPIC_BONUS * topicSim;
+        result.bonusWhy = "похоже на прошлое сообщение";
+        result.score = sim + result.bonus;
         result.topicHelped = topicSim > 0.3;
       }
       return result;
@@ -373,6 +449,24 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
     used.push("Уже звучавшие ответы получили меньший вес, чтобы не повторяться.");
   }
 
+  const search: Search = {
+    features: us.map((name) => ({ name, weight: weightOf(model, name) })),
+    uNorm,
+    rows: scored.slice(0, 6).map((x) => ({
+      question: x.question,
+      common: x.common,
+      dot: x.dot,
+      qNorm: x.qNorm,
+      sim: x.sim,
+      bonus: x.bonus,
+      bonusWhy: x.bonusWhy,
+      score: x.score,
+      weight: x.score ** 2,
+      chosen: chosen.some((c) => c.item === x),
+      reply: x.reply,
+    })),
+  };
+
   return {
     userTokens,
     matches: chosen.map(({ item }) => ({
@@ -384,6 +478,7 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
     active,
     memory,
     used,
+    search,
   };
 }
 
@@ -440,10 +535,13 @@ export function nextStep(model: Model, active: ActiveAnswer[], out: number[], te
 
   return {
     index: out.length + 1,
+    total,
+    temp,
     context: context.filter((id) => id !== START).map((id) => ({ id, text: tokenText(model, id) })),
     cands: entries.map(([id, c], i) => ({
       id,
       text: tokenText(model, id),
+      weight: c.weight,
       prob: scaled[i] / scaledTotal,
       count: c.count,
       example: c.example,

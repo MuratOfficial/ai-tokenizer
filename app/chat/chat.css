@@ -576,3 +576,228 @@ button.navLink {
 .used li::marker {
   color: var(--accent);
 }
+
+/* Расчёты */
+
+.calc {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.calc summary {
+  padding: 8px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.calc[open] {
+  padding-bottom: 10px;
+}
+
+.calc > :not(summary) {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+
+.calcStep {
+  margin-top: 8px;
+  margin-bottom: 6px;
+  color: var(--muted);
+}
+
+.calcLine {
+  display: block;
+  margin-top: 4px;
+  font: 12px/1.5 var(--font-geist-mono), ui-monospace, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.feats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.feat {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.feat i {
+  font-style: normal;
+  color: var(--muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+.feat.hit {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.calcRow {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  opacity: 0.65;
+}
+
+.calcRow.chosen {
+  opacity: 1;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.calcHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.calcHead span {
+  flex: 1;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.calcHead em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.calcRow.chosen .calcHead em {
+  color: var(--accent);
+}
+
+.candCalc {
+  font: 11px/1.4 var(--font-geist-mono), ui-monospace, Consolas, monospace;
+  color: var(--muted);
+}
+
+.material {
+  margin-top: 6px;
+  margin-bottom: 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.material b {
+  display: inline-block;
+  min-width: 34px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 600;
+}
+
+/* Расход токенов */
+
+.usageLine {
+  margin: -8px 20px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.usageLine b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.usageNums {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.usageNums div {
+  padding: 8px 4px;
+  border-radius: 10px;
+  background: var(--bg);
+  text-align: center;
+}
+
+.usageNums b {
+  display: block;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usageNums span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.usageRows {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.usageRow {
+  display: grid;
+  grid-template-columns: 28px 1fr 30px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.usageRow.current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.usageBar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.seg.history {
+  background: var(--muted);
+}
+
+.seg.message {
+  background: var(--accent);
+}
+
+.seg.output {
+  background: #22a06b;
+}
+
+.usageBar .seg {
+  transition: width 0.5s;
+}
+
+.usageSum {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 3px;
+}

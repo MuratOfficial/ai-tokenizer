@@ -14,6 +14,7 @@ import {
   type ActiveAnswer,
   type Match,
   type Memory,
+  type Search,
   type Step,
   type Tok,
 } from "@/lib/chat-model";
@@ -40,6 +41,10 @@ type BotMsg = {
   memory: Memory;
   /** Как память повлияла на ответ */
   used: string[];
+  /** Расчёт поиска похожих вопросов */
+  search: Search;
+  /** Ответы-примеры, из которых собирается ответ, и их веса */
+  material: { text: string; weight: number }[];
   /** Шаги, которые уже закончились: в каждом выбран токен */
   steps: Step[];
 };
@@ -102,7 +107,12 @@ export default function Chat() {
     setMessages([
       ...messages,
       { role: "user", text },
-      { role: "bot", userTokens: r.userTokens, matches: r.matches, fallback: r.fallback, memory: r.memory, used: r.used, steps: [] },
+      { role: "bot", userTokens: r.userTokens, matches: r.matches, fallback: r.fallback, memory: r.memory,
+        used: r.used,
+        search: r.search,
+        material: r.active.map((a) => ({ text: a.text, weight: a.weight })).sort((a, b) => b.weight - a.weight),
+        steps: [],
+      },
     ]);
     setInput("");
     setInspect(null);
@@ -185,6 +195,19 @@ export default function Chat() {
       viewAt = [lastBotIndex, lastBot.steps.length - 1];
     }
   }
+
+  // Расход токенов: большие модели при каждом ответе перечитывают всю историю разговора
+  const usage: UsageRow[] = [];
+  let history = 0;
+  messages.forEach((m, i) => {
+    if (m.role !== "bot") return;
+    let output = m.steps.filter((st) => st.cands[st.picked!].id !== END).length;
+    if (i === lastBotIndex && live?.phase === "pick" && live.step.cands[live.step.picked!].id !== END) output++;
+    usage.push({ index: i, history, message: m.userTokens.length, output });
+    history += m.userTokens.length + output;
+  });
+  const totalIn = usage.reduce((sum, u) => sum + u.history + u.message, 0);
+  const totalOut = usage.reduce((sum, u) => sum + u.output, 0);
 
   return (
     <div className="chatPage">
@@ -284,6 +307,12 @@ export default function Chat() {
               </button>
             )}
           </form>
+          {usage.length > 0 && (
+            <p className="usageLine">
+              Токены за разговор: вход <b>{totalIn}</b> · выход <b>{totalOut}</b> · всего{" "}
+              <b>{totalIn + totalOut}</b>
+            </p>
+          )}
         </section>
 
         <aside className="panel" ref={panelRef}>
@@ -383,6 +412,7 @@ export default function Chat() {
                     </p>
                   </>
                 )}
+                <SearchCalc search={viewMsg.search} fallback={viewMsg.fallback} />
               </div>
 
               {viewStep && (
@@ -410,6 +440,22 @@ export default function Chat() {
 
                   <Candidates step={viewStep} phase={viewPhase} />
 
+                  <details className="calc">
+                    <summary>Откуда веса: {viewMsg.material.length} ответов-примеров</summary>
+                    <p className="calcStep">
+                      Вес кандидата — это сумма весов ответов, в которых этот токен стоит сразу
+                      после показанного контекста. Вероятность = вес кандидата ÷ сумма весов всех
+                      кандидатов.
+                    </p>
+                    <ul className="material">
+                      {viewMsg.material.map((a, i) => (
+                        <li key={i}>
+                          <b>{a.weight.toFixed(2)}</b> {a.text}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+
                   <p className={`status ${viewPhase}`}>
                     {viewPhase === "think" ? (
                       <>⏳ Модель оценивает кандидатов…</>
@@ -419,6 +465,11 @@ export default function Chat() {
                   </p>
                 </div>
               )}
+
+              <div className="block">
+                <h3>5. Расход токенов</h3>
+                <UsageView rows={usage} current={viewMsgIndex} totalIn={totalIn} totalOut={totalOut} />
+              </div>
             </>
           )}
 
@@ -431,6 +482,165 @@ export default function Chat() {
         </aside>
       </div>
     </div>
+  );
+}
+
+type UsageRow = { index: number; history: number; message: number; output: number };
+
+function featureLabel(name: string) {
+  return name.startsWith("=") ? `«${name.slice(1)}» целиком` : `основа «${name}»`;
+}
+
+/** Как модель искала похожие вопросы: все числа расчёта */
+function SearchCalc({ search, fallback }: { search: Search; fallback: boolean }) {
+  return (
+    <details className="calc" open>
+      <summary>Как найдены совпадения — расчёт</summary>
+
+      <p className="calcStep">
+        <b>а)</b> Сообщение превращается в признаки: основы слов и слова целиком. Чем реже признак
+        встречается в примерах, тем больше его вес.
+      </p>
+      <div className="feats">
+        {search.features.map((f) => (
+          <span key={f.name} className="feat">
+            {featureLabel(f.name)} <i>{f.weight.toFixed(1)}</i>
+          </span>
+        ))}
+        {search.features.length === 0 && <span className="feat">слов не найдено</span>}
+      </div>
+      <code className="calcLine">
+        длина сообщения = √(сумма квадратов весов) = {search.uNorm.toFixed(2)}
+      </code>
+
+      <p className="calcStep">
+        <b>б)</b> Сообщение сравнивается с каждым вопросом из примеров: сходство = сумма квадратов
+        весов совпавших признаков ÷ (длина сообщения × длина вопроса). Лучшие результаты:
+      </p>
+      {search.rows.length === 0 && <p className="calcStep">Ни один вопрос не совпал ни одним словом.</p>}
+      {search.rows.map((r, i) => (
+        <div key={i} className={`calcRow ${r.chosen ? "chosen" : ""}`}>
+          <div className="calcHead">
+            <span>
+              {r.reply && "↩ "}«{r.question}»
+            </span>
+            <b>{r.score.toFixed(2)}</b>
+            <em>{r.chosen ? "взят" : "отсечён"}</em>
+          </div>
+          {r.common.length > 0 && (
+            <>
+              <div className="feats">
+                {r.common.map((f) => (
+                  <span key={f.name} className="feat hit">
+                    {featureLabel(f.name)} <i>{f.weight.toFixed(1)}²</i>
+                  </span>
+                ))}
+              </div>
+              <code className="calcLine">
+                сходство = {r.dot.toFixed(1)} ÷ ({search.uNorm.toFixed(2)} × {r.qNorm.toFixed(2)}) ={" "}
+                {r.sim.toFixed(2)}
+              </code>
+            </>
+          )}
+          {r.bonus > 0.005 && (
+            <code className="calcLine">
+              {r.common.length > 0 ? `${r.sim.toFixed(2)} + ${r.bonus.toFixed(2)}` : r.bonus.toFixed(2)} (
+              {r.bonusWhy}) = {r.score.toFixed(2)}
+            </code>
+          )}
+          {r.chosen && (
+            <code className="calcLine">
+              вес ответов = {r.score.toFixed(2)}² = {r.weight.toFixed(2)}
+            </code>
+          )}
+        </div>
+      ))}
+
+      <p className="calcStep">
+        <b>в)</b> В работу идут вопросы с оценкой от 0.30, близкие к лучшему (не ниже 75% его
+        оценки). При почти точном совпадении остальные отбрасываются, а если сообщение понято как
+        ответ на вопрос модели (↩), посторонние темы не подмешиваются.{fallback && " Здесь таких нет, поэтому модель берёт общие ответы «я не понял»."}
+      </p>
+    </details>
+  );
+}
+
+/** Расход токенов по ответам: вход (история + сообщение) и выход */
+function UsageView({
+  rows,
+  current,
+  totalIn,
+  totalOut,
+}: {
+  rows: UsageRow[];
+  current: number;
+  totalIn: number;
+  totalOut: number;
+}) {
+  const row = rows.find((r) => r.index === current);
+  const max = Math.max(1, ...rows.map((r) => r.history + r.message + r.output));
+  if (!row) return null;
+  const input = row.history + row.message;
+  return (
+    <>
+      <div className="usageNums">
+        <div>
+          <b>{input}</b>
+          <span>вход</span>
+        </div>
+        <div>
+          <b>{row.output}</b>
+          <span>выход</span>
+        </div>
+        <div>
+          <b>{input + row.output}</b>
+          <span>этот ответ</span>
+        </div>
+        <div>
+          <b>{totalIn + totalOut}</b>
+          <span>весь разговор</span>
+        </div>
+      </div>
+      <code className="calcLine">
+        вход = история {row.history} + сообщение {row.message} = {input}
+      </code>
+      <code className="calcLine">
+        этот ответ = вход {input} + выход {row.output} = {input + row.output}
+      </code>
+      <code className="calcLine">
+        весь разговор = вход {totalIn} + выход {totalOut} = {totalIn + totalOut}
+      </code>
+
+      <div className="usageRows">
+        {rows.map((r, i) => (
+          <div key={r.index} className={`usageRow ${r.index === current ? "current" : ""}`}>
+            <span>№{i + 1}</span>
+            <span className="usageBar">
+              <span className="seg history" style={{ width: `${(r.history / max) * 100}%` }} />
+              <span className="seg message" style={{ width: `${(r.message / max) * 100}%` }} />
+              <span className="seg output" style={{ width: `${(r.output / max) * 100}%` }} />
+            </span>
+            <span className="usageSum">{r.history + r.message + r.output}</span>
+          </div>
+        ))}
+      </div>
+      <div className="legend">
+        <span>
+          <i className="seg history" /> история
+        </span>
+        <span>
+          <i className="seg message" /> сообщение
+        </span>
+        <span>
+          <i className="seg output" /> ответ
+        </span>
+      </div>
+      <p className="muted small">
+        Большая модель перед каждым ответом перечитывает весь разговор, поэтому вход растёт с
+        каждым сообщением — и именно за эти токены платят. Наша мини-модель историю не
+        перечитывает (у неё короткая память), но расход посчитан так, как его считают у настоящих.
+      </p>
+    </>
   );
 }
 
@@ -509,6 +719,10 @@ function Candidates({ step, phase }: { step: Step; phase: Live["phase"] }) {
                 Встретился {times(c.count)}, например: «{c.example}»
               </span>
             )}
+            <span className="candCalc">
+              вес {c.weight.toFixed(2)} ÷ {step.total.toFixed(2)} = {pct(c.weight / step.total)}
+              {step.temp !== 1 && ` → при температуре ${step.temp.toFixed(1)}: ${pct(c.prob)}`}
+            </span>
           </div>
         );
       })}

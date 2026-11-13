@@ -530,3 +530,49 @@
   background: var(--card);
   border-radius: 18px 18px 0 0;
 }
+
+.topBtns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+button.navLink {
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.memory {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.memory dt {
+  color: var(--muted);
+}
+
+.memory dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.used {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+  font-size: 13px;
+}
+
+.used li::marker {
+  color: var(--accent);
+}

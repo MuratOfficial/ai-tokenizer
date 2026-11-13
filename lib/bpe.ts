@@ -34,6 +34,8 @@ export type BpeResult = {
 };
 
 const MAX_MERGES = 200;
+/** Пара токенов (a, b) кодируется одним числом a * KEY_BASE + b */
+const KEY_BASE = 1_000_000;
 
 /** canMerge — необязательное правило: какие два токена разрешено склеивать */
 export function trainBpe(
@@ -59,19 +61,21 @@ export function trainBpe(
 
   while (steps.length < maxMerges) {
     // Считаем, сколько раз встречается каждая пара соседей
-    const counts = new Map<string, Candidate>();
+    const counts = new Map<number, Candidate>();
     for (let i = 0; i < tokens.length - 1; i++) {
-      if (canMerge && !canMerge(vocab[tokens[i]].text, vocab[tokens[i + 1]].text)) continue;
-      const key = tokens[i] + "," + tokens[i + 1];
+      const key = tokens[i] * KEY_BASE + tokens[i + 1];
       const c = counts.get(key);
       if (c) c.count++;
       else counts.set(key, { a: tokens[i], b: tokens[i + 1], count: 1 });
     }
 
+    let pairs = [...counts.values()];
+    // На больших текстах пары, встреченные один раз, не нужны: склеивать их всё равно нельзя
+    if (pairs.length > 500) pairs = pairs.filter((c) => c.count >= 2);
+    if (canMerge) pairs = pairs.filter((c) => canMerge(vocab[c.a].text, vocab[c.b].text));
+
     // Map хранит порядок вставки, а sort стабилен — при равенстве побеждает пара, встреченная раньше
-    const candidates = [...counts.values()]
-      .sort((x, y) => y.count - x.count)
-      .slice(0, 5);
+    const candidates = pairs.sort((x, y) => y.count - x.count).slice(0, 5);
     const best = candidates[0];
     if (!best || best.count < 2) break;
 

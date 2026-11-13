@@ -5,12 +5,15 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEven
 import { suggestions } from "@/lib/chat-corpus";
 import {
   END,
+  emptyMemory,
   getModel,
   nextStep,
+  remember,
   retrieve,
   sample,
   type ActiveAnswer,
   type Match,
+  type Memory,
   type Step,
   type Tok,
 } from "@/lib/chat-model";
@@ -33,6 +36,10 @@ type BotMsg = {
   userTokens: Tok[];
   matches: Match[];
   fallback: boolean;
+  /** Что модель помнила, когда отвечала */
+  memory: Memory;
+  /** Как память повлияла на ответ */
+  used: string[];
   /** Шаги, которые уже закончились: в каждом выбран токен */
   steps: Step[];
 };
@@ -69,6 +76,7 @@ export default function Chat() {
   const [inspect, setInspect] = useState<[number, number] | null>(null);
 
   const active = useRef<ActiveAnswer[]>([]);
+  const memory = useRef<Memory>(emptyMemory());
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -89,17 +97,38 @@ export default function Chat() {
   function send(text: string) {
     text = text.trim();
     if (!text || live) return;
-    const r = retrieve(model, text);
+    const r = retrieve(model, text, memory.current);
     active.current = r.active;
     setMessages([
       ...messages,
       { role: "user", text },
-      { role: "bot", userTokens: r.userTokens, matches: r.matches, fallback: r.fallback, steps: [] },
+      { role: "bot", userTokens: r.userTokens, matches: r.matches, fallback: r.fallback, memory: r.memory, used: r.used, steps: [] },
     ]);
     setInput("");
     setInspect(null);
     setPaused(false);
     setLive({ phase: "think", step: nextStep(model, r.active, [], temp) });
+  }
+
+  /** Ответ закончен: запоминаем разговор для следующих сообщений */
+  function finish(steps: Step[]) {
+    const bot = messages[messages.length - 1] as BotMsg;
+    const user = messages[messages.length - 2] as UserMsg;
+    const botText = steps
+      .map((s) => s.cands[s.picked!])
+      .filter((c) => c.id !== END)
+      .map((c) => c.text)
+      .join("");
+    memory.current = remember(bot.memory, user.text, botText);
+    setLive(null);
+    inputRef.current?.focus();
+  }
+
+  function reset() {
+    memory.current = emptyMemory();
+    setMessages([]);
+    setLive(null);
+    setInspect(null);
   }
 
   /** Один шаг вперёд: показать выбор или перейти к следующему токену */
@@ -115,8 +144,7 @@ export default function Chat() {
 
     const done = live.step.cands[live.step.picked!].id === END || steps.length >= MAX_TOKENS;
     if (done) {
-      setLive(null);
-      inputRef.current?.focus();
+      finish(steps);
     } else {
       const out = steps.map((s) => s.cands[s.picked!].id);
       setLive({ phase: "think", step: nextStep(model, active.current, out, temp) });
@@ -126,7 +154,7 @@ export default function Chat() {
   useEffect(() => {
     if (!live || paused) return;
     // Если кандидат всего один, разглядывать нечего — идём быстрее
-    const factor = live.step.cands.length === 1 ? 0.5 : 1;
+    const factor = live.step.cands.length === 1 ? 0.3 : 1;
     const t = setTimeout(advance, SPEEDS[speed][live.phase] * factor);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,9 +193,16 @@ export default function Chat() {
           <h1>Чат с мини-моделью</h1>
           <p>Напишите сообщение и смотрите, как ответ собирается токен за токеном.</p>
         </div>
-        <Link href="/" className="navLink">
-          ← Токенизация
-        </Link>
+        <div className="topBtns">
+          {messages.length > 0 && (
+            <button type="button" className="navLink" onClick={reset} title="Очистить чат и память модели">
+              Новый разговор
+            </button>
+          )}
+          <Link href="/" className="navLink">
+            ← Токенизация
+          </Link>
+        </div>
       </header>
 
       <div className="chatBody">
@@ -178,7 +213,7 @@ export default function Chat() {
                 <div className="welcomeIcon">💬</div>
                 <h2>Спросите что-нибудь</h2>
                 <p>
-                  Это крошечная учебная модель: она знает около {model.groups.length} тем. Зато
+                  Это крошечная учебная модель: она знает около {model.topicCount} тем, помнит разговор и сама задаёт вопросы. Зато
                   справа видно каждый её шаг.
                 </p>
                 <div className="suggest">
@@ -240,7 +275,7 @@ export default function Chat() {
               aria-label="Сообщение"
             />
             {live ? (
-              <button type="button" className="send stop" onClick={() => setLive(null)} title="Остановить">
+              <button type="button" className="send stop" onClick={() => finish(lastBot?.steps ?? [])} title="Остановить">
                 ■
               </button>
             ) : (
@@ -293,8 +328,9 @@ export default function Chat() {
 
           {!viewMsg ? (
             <div className="panelEmpty">
-              <p>Здесь появится разбор ответа в три шага:</p>
+              <p>Здесь появится разбор ответа в четыре шага:</p>
               <ol>
+                <li>Модель вспоминает разговор: ваше имя, прошлое сообщение, свой вопрос.</li>
                 <li>Ваше сообщение режется на токены.</li>
                 <li>Модель находит похожие вопросы в своих обучающих примерах.</li>
                 <li>
@@ -306,7 +342,12 @@ export default function Chat() {
           ) : (
             <>
               <div className="block">
-                <h3>1. Сообщение → токены</h3>
+                <h3>1. Память о разговоре</h3>
+                <MemoryView memory={viewMsg.memory} used={viewMsg.used} />
+              </div>
+
+              <div className="block">
+                <h3>2. Сообщение → токены</h3>
                 <div className="tokens">
                   {viewMsg.userTokens.map((t, i) => (
                     <Chip key={i} entry={t} showId={t.id >= 0} />
@@ -315,7 +356,7 @@ export default function Chat() {
               </div>
 
               <div className="block">
-                <h3>2. Похожие вопросы из обучения</h3>
+                <h3>3. Похожие вопросы из обучения</h3>
                 {viewMsg.fallback ? (
                   <p className="muted">
                     Ничего похожего не нашлось, поэтому модель собирает ответ из общих фраз вроде «я
@@ -326,7 +367,9 @@ export default function Chat() {
                     <div className="matches">
                       {viewMsg.matches.map((m) => (
                         <div key={m.question} className="bar">
-                          <span className="barPair">«{m.question}»</span>
+                          <span className="barPair" title={m.reply ? "Понято как ответ на вопрос модели" : undefined}>
+                            {m.reply && "↩ "}«{m.question}»
+                          </span>
                           <span className="barTrack">
                             <span className="barFill grow" style={{ width: `${m.similarity * 100}%` }} />
                           </span>
@@ -344,7 +387,7 @@ export default function Chat() {
 
               {viewStep && (
                 <div className="block" ref={stepRef} key={`${viewMsgIndex}-${viewStep.index}`}>
-                  <h3>3. Выбор токена №{viewStep.index}</h3>
+                  <h3>4. Выбор токена №{viewStep.index}</h3>
                   {viewStep.context.length === 0 ? (
                     <p className="muted">
                       Ответ только начинается. Модель смотрит, с каких токенов начинались ответы на
@@ -388,6 +431,55 @@ export default function Chat() {
         </aside>
       </div>
     </div>
+  );
+}
+
+function MemoryView({ memory, used }: { memory: Memory; used: string[] }) {
+  const empty = !memory.name && !memory.last && !memory.pending;
+  return (
+    <>
+      {empty ? (
+        <p className="muted">Пока пусто: это первое сообщение разговора.</p>
+      ) : (
+        <dl className="memory">
+          {memory.name && (
+            <>
+              <dt>Имя собеседника</dt>
+              <dd>{memory.name}</dd>
+            </>
+          )}
+          {memory.last && (
+            <>
+              <dt>Прошлое сообщение</dt>
+              <dd>«{memory.last}»</dd>
+            </>
+          )}
+          {memory.pending && (
+            <>
+              <dt>Мой вопрос, на который жду ответ</dt>
+              <dd>«{memory.pending.question}»</dd>
+            </>
+          )}
+          {memory.said.length > 0 && (
+            <>
+              <dt>Уже сказано ответов</dt>
+              <dd>{memory.said.length}</dd>
+            </>
+          )}
+        </dl>
+      )}
+      {used.length > 0 && (
+        <ul className="used">
+          {used.map((u) => (
+            <li key={u}>{u}</li>
+          ))}
+        </ul>
+      )}
+      <p className="muted small">
+        У больших моделей отдельной памяти нет: им каждый раз заново подают на вход весь разговор
+        в виде токенов.
+      </p>
+    </>
   );
 }
 

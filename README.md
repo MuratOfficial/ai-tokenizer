@@ -16,4 +16,7 @@ npm run dev
 - `lib/bpe.ts` — сам алгоритм BPE (около 100 строк, без зависимостей)
 - `lib/examples.ts` — готовые примеры текстов; чтобы добавить свой, допишите объект в массив
 - `app/tokenizer.tsx` — интерфейс и визуализация
-- `app/globals.css` — стили
+- `app/generation.tsx`, `lib/scenarios.ts` — блок «Как ИИ подбирает ответ» с готовыми сценариями
+- `app/chat/` — страница чата (`/chat`) с панелью «Под капотом»
+- `lib/chat-model.ts` — мини-модель чата; `lib/chat-corpus.ts` — её обучающие примеры (новая тема = новая группа в массиве)
+- `app/globals.css`, `app/chat/chat.css` — стили

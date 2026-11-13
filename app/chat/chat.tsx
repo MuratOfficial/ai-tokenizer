@@ -1,0 +1,457 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { suggestions } from "@/lib/chat-corpus";
+import {
+  END,
+  getModel,
+  nextStep,
+  retrieve,
+  sample,
+  type ActiveAnswer,
+  type Match,
+  type Step,
+  type Tok,
+} from "@/lib/chat-model";
+import { Chip, show } from "../chip";
+
+const MAX_TOKENS = 60;
+const SHOWN_CANDIDATES = 5;
+
+/** Сколько длится показ кандидатов и показ выбранного токена, мс */
+const SPEEDS = {
+  slow: { label: "Медленно", think: 3400, pick: 1900 },
+  normal: { label: "Средне", think: 1900, pick: 1100 },
+  fast: { label: "Быстро", think: 650, pick: 400 },
+} as const;
+type Speed = keyof typeof SPEEDS;
+
+type UserMsg = { role: "user"; text: string };
+type BotMsg = {
+  role: "bot";
+  userTokens: Tok[];
+  matches: Match[];
+  fallback: boolean;
+  /** Шаги, которые уже закончились: в каждом выбран токен */
+  steps: Step[];
+};
+type Msg = UserMsg | BotMsg;
+
+/** Шаг, который идёт прямо сейчас: think — показаны кандидаты, pick — токен выбран */
+type Live = { phase: "think" | "pick"; step: Step };
+
+function pct(p: number) {
+  if (p === 0) return "0%";
+  if (p < 0.01) return "<1%";
+  return Math.round(p * 100) + "%";
+}
+
+function times(n: number) {
+  const d = n % 10;
+  const h = n % 100;
+  return `${n} ${d >= 2 && d <= 4 && (h < 12 || h > 14) ? "раза" : "раз"}`;
+}
+
+function hue(id: number) {
+  return { "--h": (((id * 47) % 360) + 360) % 360 } as CSSProperties;
+}
+
+export default function Chat() {
+  const model = useMemo(() => getModel(), []);
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [input, setInput] = useState("");
+  const [live, setLive] = useState<Live | null>(null);
+  const [paused, setPaused] = useState(false);
+  const [speed, setSpeed] = useState<Speed>("normal");
+  const [temp, setTemp] = useState(1);
+  /** Какой токен готового ответа рассматриваем: [номер сообщения, номер шага] */
+  const [inspect, setInspect] = useState<[number, number] | null>(null);
+
+  const active = useRef<ActiveAnswer[]>([]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const stepRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, live]);
+
+  // Держим текущий шаг на виду в панели
+  const liveIndex = live?.step.index;
+  useEffect(() => {
+    if (liveIndex && panelRef.current && stepRef.current) {
+      panelRef.current.scrollTo({ top: stepRef.current.offsetTop - 64, behavior: "smooth" });
+    }
+  }, [liveIndex]);
+
+  function send(text: string) {
+    text = text.trim();
+    if (!text || live) return;
+    const r = retrieve(model, text);
+    active.current = r.active;
+    setMessages([
+      ...messages,
+      { role: "user", text },
+      { role: "bot", userTokens: r.userTokens, matches: r.matches, fallback: r.fallback, steps: [] },
+    ]);
+    setInput("");
+    setInspect(null);
+    setPaused(false);
+    setLive({ phase: "think", step: nextStep(model, r.active, [], temp) });
+  }
+
+  /** Один шаг вперёд: показать выбор или перейти к следующему токену */
+  function advance() {
+    if (!live) return;
+    if (live.phase === "think") {
+      setLive({ phase: "pick", step: { ...live.step, picked: sample(live.step) } });
+      return;
+    }
+    const last = messages[messages.length - 1] as BotMsg;
+    const steps = [...last.steps, live.step];
+    setMessages([...messages.slice(0, -1), { ...last, steps }]);
+
+    const done = live.step.cands[live.step.picked!].id === END || steps.length >= MAX_TOKENS;
+    if (done) {
+      setLive(null);
+      inputRef.current?.focus();
+    } else {
+      const out = steps.map((s) => s.cands[s.picked!].id);
+      setLive({ phase: "think", step: nextStep(model, active.current, out, temp) });
+    }
+  }
+
+  useEffect(() => {
+    if (!live || paused) return;
+    // Если кандидат всего один, разглядывать нечего — идём быстрее
+    const factor = live.step.cands.length === 1 ? 0.5 : 1;
+    const t = setTimeout(advance, SPEEDS[speed][live.phase] * factor);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, paused, speed]);
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    send(input);
+  }
+
+  // Что показывать в панели: идущий шаг, выбранный токен или последний токен последнего ответа
+  const lastBotIndex = messages.length - 1;
+  const lastBot = messages[lastBotIndex]?.role === "bot" ? (messages[lastBotIndex] as BotMsg) : null;
+  let viewMsg: BotMsg | null = lastBot;
+  let viewStep: Step | null = live?.step ?? null;
+  let viewPhase: Live["phase"] = live?.phase ?? "pick";
+  let viewAt: [number, number] | null = null;
+  let viewMsgIndex = lastBotIndex;
+  if (!live) {
+    viewPhase = "pick";
+    if (inspect && messages[inspect[0]]?.role === "bot") {
+      viewMsg = messages[inspect[0]] as BotMsg;
+      viewStep = viewMsg.steps[inspect[1]] ?? null;
+      viewAt = inspect;
+      viewMsgIndex = inspect[0];
+    } else if (lastBot && lastBot.steps.length) {
+      viewStep = lastBot.steps[lastBot.steps.length - 1];
+      viewAt = [lastBotIndex, lastBot.steps.length - 1];
+    }
+  }
+
+  return (
+    <div className="chatPage">
+      <header className="chatTop">
+        <div>
+          <h1>Чат с мини-моделью</h1>
+          <p>Напишите сообщение и смотрите, как ответ собирается токен за токеном.</p>
+        </div>
+        <Link href="/" className="navLink">
+          ← Токенизация
+        </Link>
+      </header>
+
+      <div className="chatBody">
+        <section className="chatCol">
+          <div className="messages" ref={listRef}>
+            {messages.length === 0 && (
+              <div className="welcome">
+                <div className="welcomeIcon">💬</div>
+                <h2>Спросите что-нибудь</h2>
+                <p>
+                  Это крошечная учебная модель: она знает около {model.groups.length} тем. Зато
+                  справа видно каждый её шаг.
+                </p>
+                <div className="suggest">
+                  {suggestions.map((s) => (
+                    <button key={s} type="button" onClick={() => send(s)}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((m, mi) =>
+              m.role === "user" ? (
+                <div key={mi} className="msg user">
+                  <div className="bubble">{m.text}</div>
+                </div>
+              ) : (
+                <div key={mi} className="msg bot">
+                  <div className="avatar">ИИ</div>
+                  <div className="bubble">
+                    {m.steps.map((s, si) => {
+                      const c = s.cands[s.picked!];
+                      if (c.id === END) return null;
+                      const on = viewAt?.[0] === mi && viewAt[1] === si;
+                      return (
+                        <button
+                          key={si}
+                          type="button"
+                          className={`tok ${on ? "on" : ""}`}
+                          style={hue(c.id)}
+                          disabled={!!live}
+                          onClick={() => setInspect([mi, si])}
+                          title="Показать, как выбран этот токен"
+                        >
+                          {c.text}
+                        </button>
+                      );
+                    })}
+                    {live && mi === lastBotIndex && live.phase === "pick" && live.step.cands[live.step.picked!].id !== END && (
+                      <span className="tok fresh" style={hue(live.step.cands[live.step.picked!].id)}>
+                        {live.step.cands[live.step.picked!].text}
+                      </span>
+                    )}
+                    {live && mi === lastBotIndex && <span className="caret" />}
+                  </div>
+                </div>
+              ),
+            )}
+          </div>
+
+          <form className="composer" onSubmit={onSubmit}>
+            <input
+              ref={inputRef}
+              value={input}
+              maxLength={200}
+              placeholder={live ? "Модель подбирает ответ…" : "Напишите сообщение…"}
+              onChange={(e) => setInput(e.target.value)}
+              aria-label="Сообщение"
+            />
+            {live ? (
+              <button type="button" className="send stop" onClick={() => setLive(null)} title="Остановить">
+                ■
+              </button>
+            ) : (
+              <button type="submit" className="send" disabled={!input.trim()} title="Отправить">
+                ↑
+              </button>
+            )}
+          </form>
+        </section>
+
+        <aside className="panel" ref={panelRef}>
+          <div className="panelHead">
+            <h2>Под капотом</h2>
+            {live && (
+              <div className="panelBtns">
+                <button type="button" onClick={() => setPaused(!paused)}>
+                  {paused ? "▶ Дальше" : "⏸ Пауза"}
+                </button>
+                {paused && (
+                  <button type="button" onClick={advance}>
+                    Шаг ▶
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="settings">
+            <div className="seg" role="group" aria-label="Скорость">
+              {(Object.keys(SPEEDS) as Speed[]).map((k) => (
+                <button key={k} type="button" className={k === speed ? "active" : ""} onClick={() => setSpeed(k)}>
+                  {SPEEDS[k].label}
+                </button>
+              ))}
+            </div>
+            <label className="tempRow">
+              <span>
+                Температура <b>{temp.toFixed(1)}</b>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={1.5}
+                step={0.1}
+                value={temp}
+                onChange={(e) => setTemp(Number(e.target.value))}
+              />
+            </label>
+          </div>
+
+          {!viewMsg ? (
+            <div className="panelEmpty">
+              <p>Здесь появится разбор ответа в три шага:</p>
+              <ol>
+                <li>Ваше сообщение режется на токены.</li>
+                <li>Модель находит похожие вопросы в своих обучающих примерах.</li>
+                <li>
+                  Ответ собирается по одному токену: для каждого видны кандидаты, их вероятности и
+                  выбор.
+                </li>
+              </ol>
+            </div>
+          ) : (
+            <>
+              <div className="block">
+                <h3>1. Сообщение → токены</h3>
+                <div className="tokens">
+                  {viewMsg.userTokens.map((t, i) => (
+                    <Chip key={i} entry={t} showId={t.id >= 0} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="block">
+                <h3>2. Похожие вопросы из обучения</h3>
+                {viewMsg.fallback ? (
+                  <p className="muted">
+                    Ничего похожего не нашлось, поэтому модель собирает ответ из общих фраз вроде «я
+                    не понял».
+                  </p>
+                ) : (
+                  <>
+                    <div className="matches">
+                      {viewMsg.matches.map((m) => (
+                        <div key={m.question} className="bar">
+                          <span className="barPair">«{m.question}»</span>
+                          <span className="barTrack">
+                            <span className="barFill grow" style={{ width: `${m.similarity * 100}%` }} />
+                          </span>
+                          <span className="barCount">{pct(m.similarity)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="muted small">
+                      Ответы на эти вопросы — материал для ответа. Чем больше сходство, тем больше
+                      их вес.
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {viewStep && (
+                <div className="block" ref={stepRef} key={`${viewMsgIndex}-${viewStep.index}`}>
+                  <h3>3. Выбор токена №{viewStep.index}</h3>
+                  {viewStep.context.length === 0 ? (
+                    <p className="muted">
+                      Ответ только начинается. Модель смотрит, с каких токенов начинались ответы на
+                      похожие вопросы.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="muted">
+                        Модель смотрит на конец ответа и ищет, что шло после этих токенов в похожих
+                        примерах:
+                      </p>
+                      <div className="tokens context">
+                        {viewStep.context.map((t, i) => (
+                          <Chip key={i} entry={t} />
+                        ))}
+                        <span className="arrow">→ ?</span>
+                      </div>
+                    </>
+                  )}
+
+                  <Candidates step={viewStep} phase={viewPhase} />
+
+                  <p className={`status ${viewPhase}`}>
+                    {viewPhase === "think" ? (
+                      <>⏳ Модель оценивает кандидатов…</>
+                    ) : (
+                      <PickedNote step={viewStep} />
+                    )}
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
+          <p className="about">
+            Это настоящая, но крошечная модель: {model.answerCount} примеров ответов и словарь из{" "}
+            {model.vocab.length} токенов. Вероятности не выдуманы — они считаются по тому, что шло
+            после таких же токенов в похожих примерах. У больших моделей эту работу делает
+            нейросеть с миллиардами параметров.
+          </p>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function Candidates({ step, phase }: { step: Step; phase: Live["phase"] }) {
+  const picked = phase === "pick" ? step.picked : undefined;
+  // Показываем лучших, а если выпал редкий токен — добавляем и его
+  const shown = step.cands.map((_, i) => i).filter((i) => i < SHOWN_CANDIDATES || i === picked);
+  const hidden = step.cands.length - shown.length;
+  const hiddenProb = step.cands.reduce((s, c, i) => (shown.includes(i) ? s : s + c.prob), 0);
+
+  return (
+    <div className="cands">
+      {shown.map((i) => {
+        const c = step.cands[i];
+        const state = picked === undefined ? "" : picked === i ? "picked" : "faded";
+        return (
+          <div key={i} className={`cand ${state}`}>
+            <span className="candTop">
+              <span className="barPair">{show(c.text)}</span>
+              <span className="barTrack">
+                <span className="barFill grow" style={{ width: `${c.prob * 100}%` }} />
+              </span>
+              <span className="barCount">{pct(c.prob)}</span>
+            </span>
+            {c.count > 0 && (
+              <span className="candWhy">
+                Встретился {times(c.count)}, например: «{c.example}»
+              </span>
+            )}
+          </div>
+        );
+      })}
+      {hidden > 0 && (
+        <div className="cand rest">
+          <span className="candTop">
+            <span className="barPair">…ещё {hidden}</span>
+            <span className="barTrack">
+              <span className="barFill" style={{ width: `${hiddenProb * 100}%` }} />
+            </span>
+            <span className="barCount">{pct(hiddenProb)}</span>
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PickedNote({ step }: { step: Step }) {
+  const c = step.cands[step.picked!];
+  if (step.cands.length === 1) {
+    return (
+      <>
+        ✅ Вариант всего один — <b>«{show(c.text)}»</b>. После такого начала в примерах шло только
+        это.
+      </>
+    );
+  }
+  return (
+    <>
+      🎲 Выбран <b>«{show(c.text)}»</b> ({pct(c.prob)})
+      {step.picked! > 0
+        ? " — не самый вероятный: сработала случайность."
+        : " — самый вероятный вариант."}
+      {c.id === END && " Это сигнал остановиться: ответ готов."}
+    </>
+  );
+}

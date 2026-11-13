@@ -475,3 +475,137 @@ div.tokens.dim .chip,
 .bar .barFill {
   transition: width 0.3s;
 }
+
+.controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.temp {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 220px);
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.temp input {
+  accent-color: var(--accent);
+}
+
+.temp small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.candHead {
+  margin: 10px 0 6px !important;
+}
+
+.cands {
+  display: grid;
+  gap: 6px;
+}
+
+.cand {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.cand:hover {
+  border-color: var(--accent);
+}
+
+.cand.rest {
+  cursor: default;
+  border-style: dashed;
+  background: transparent;
+  color: var(--muted);
+}
+
+.candTop {
+  display: grid;
+  grid-template-columns: minmax(90px, 28%) 1fr 40px;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.candTop .barPair {
+  font-weight: 600;
+}
+
+.cand .barFill {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.cand.rest .barFill {
+  background: var(--muted);
+  opacity: 0.5;
+}
+
+.candWhy {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.history {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+  font-size: 13px;
+}
+
+.history li {
+  padding-left: 2px;
+}
+
+.history .chip {
+  cursor: default;
+  vertical-align: top;
+  margin-right: 8px;
+}
+
+.historyText {
+  display: inline-block;
+  max-width: calc(100% - 130px);
+  vertical-align: top;
+}
+
+.tokens.answer {
+  max-height: none;
+  overflow: visible;
+}
+
+.history .chip {
+  min-width: 84px;
+  justify-content: center;
+}
+
+.cta {
+  display: inline-block;
+  margin-top: 14px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cta:hover {
+  filter: brightness(1.1);
+}

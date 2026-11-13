@@ -1,0 +1,532 @@
+.chatPage {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 0 16px 16px;
+}
+
+.chatTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 4px 14px;
+}
+
+.chatTop h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.chatTop p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.navLink {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.navLink:hover {
+  border-color: var(--accent);
+}
+
+.chatBody {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 460px);
+  gap: 16px;
+}
+
+.chatCol,
+.panel {
+  min-height: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+
+/* Чат */
+
+.chatCol {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 20px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.welcome {
+  margin: auto;
+  max-width: 460px;
+  text-align: center;
+}
+
+.welcomeIcon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 12px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: var(--bg);
+  font-size: 26px;
+}
+
+.welcome h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.welcome p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.suggest {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.suggest button {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.suggest button:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.msg {
+  display: flex;
+  gap: 10px;
+  max-width: 82%;
+  animation: rise 0.3s ease-out;
+}
+
+.msg.user {
+  align-self: flex-end;
+}
+
+.msg.bot {
+  align-self: flex-start;
+}
+
+.avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.bubble {
+  padding: 10px 14px;
+  border-radius: 18px;
+  font-size: 16px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg.user .bubble {
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 6px;
+}
+
+.msg.bot .bubble {
+  min-height: 46px;
+  background: var(--bg);
+  border-bottom-left-radius: 6px;
+}
+
+.tok {
+  padding: 2px 0;
+  border: 0;
+  border-radius: 4px;
+  background: hsl(var(--h) var(--chip-s) var(--chip-l));
+  color: var(--chip-text);
+  font: inherit;
+  white-space: pre-wrap;
+  cursor: pointer;
+  box-shadow: inset 1px 0 0 var(--bg);
+}
+
+.tok:disabled {
+  cursor: default;
+}
+
+.tok:not(:disabled):hover,
+.tok.on {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  position: relative;
+}
+
+.tok.fresh {
+  display: inline-block;
+  animation: land 0.5s ease-out;
+}
+
+.bubble .caret {
+  display: inline-block;
+  vertical-align: text-bottom;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes land {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(1.25);
+  }
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  margin: 8px 16px 16px;
+  padding: 6px 6px 6px 18px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  transition: border-color 0.15s;
+}
+
+.composer:focus-within {
+  border-color: var(--accent);
+}
+
+.composer input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+
+.send {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.send:not(:disabled):hover {
+  transform: scale(1.06);
+}
+
+.send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.send.stop {
+  font-size: 13px;
+}
+
+/* Панель */
+
+.panel {
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.panelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.panelHead h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.panelBtns {
+  display: flex;
+  gap: 6px;
+}
+
+.panelBtns button,
+.seg button {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.panelBtns button {
+  border-radius: 8px;
+}
+
+.panelBtns button:hover {
+  border-color: var(--accent);
+}
+
+.settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin: 12px 0 4px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.seg {
+  display: flex;
+}
+
+.seg button:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.seg button:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.seg button + button {
+  border-left: 0;
+}
+
+.seg button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.tempRow {
+  flex: 1;
+  min-width: 190px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.tempRow input {
+  flex: 1;
+  min-width: 60px;
+  accent-color: var(--accent);
+}
+
+.block {
+  margin-top: 16px;
+  animation: rise 0.35s ease-out;
+}
+
+.block h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.block .muted {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.block .small {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.matches {
+  display: grid;
+  gap: 6px;
+}
+
+.matches .bar {
+  grid-template-columns: minmax(120px, 48%) 1fr 36px;
+  color: var(--text);
+}
+
+.matches .barFill {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.tokens.context {
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.tokens.context .chip {
+  cursor: default;
+}
+
+.arrow {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.panel .cand {
+  cursor: default;
+  transition: opacity 0.5s, border-color 0.4s, box-shadow 0.4s, transform 0.4s;
+}
+
+.panel .cand.faded {
+  opacity: 0.4;
+}
+
+.panel .cand.picked {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: scale(1.015);
+}
+
+.barFill.grow {
+  animation: grow 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transform-origin: left;
+}
+
+@keyframes grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+.status {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.status.think {
+  color: var(--muted);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.panelEmpty {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.panelEmpty ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+}
+
+.about {
+  margin: 20px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg,
+  .block,
+  .tok.fresh,
+  .barFill.grow,
+  .status.think {
+    animation: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .chatPage {
+    height: auto;
+  }
+
+  .chatBody {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chatCol {
+    height: 68dvh;
+  }
+
+  .panel {
+    overflow: visible;
+  }
+
+  .msg {
+    max-width: 92%;
+  }
+}
+
+.panel {
+  position: relative;
+}
+
+/* Заголовок панели с кнопкой паузы всегда на виду */
+.panelHead {
+  position: sticky;
+  top: -18px;
+  z-index: 2;
+  margin: -18px -18px 0;
+  padding: 18px 18px 8px;
+  background: var(--card);
+  border-radius: 18px 18px 0 0;
+}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { pairPositions, trainBpe, type VocabEntry } from "@/lib/bpe";
 import { examples } from "@/lib/examples";
@@ -87,6 +88,9 @@ export default function Tokenizer() {
           ИИ не читает буквы и слова — он читает числа. Сначала текст режется на кусочки
           — <b>токены</b>, и каждому даётся номер. Здесь видно, как это происходит под капотом.
         </p>
+        <Link href="/chat" className="cta">
+          💬 Попробовать в чате: напишите сообщение и смотрите, как подбирается ответ →
+        </Link>
       </header>
 
       <section className="card">

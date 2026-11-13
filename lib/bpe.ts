@@ -35,7 +35,12 @@ export type BpeResult = {
 
 const MAX_MERGES = 200;
 
-export function trainBpe(text: string): BpeResult {
+/** canMerge — необязательное правило: какие два токена разрешено склеивать */
+export function trainBpe(
+  text: string,
+  maxMerges = MAX_MERGES,
+  canMerge?: (left: string, right: string) => boolean,
+): BpeResult {
   const vocab: VocabEntry[] = [];
   const charIds = new Map<string, number>();
 
@@ -52,10 +57,11 @@ export function trainBpe(text: string): BpeResult {
   const steps: Step[] = [];
   let tokens = initial;
 
-  while (steps.length < MAX_MERGES) {
+  while (steps.length < maxMerges) {
     // Считаем, сколько раз встречается каждая пара соседей
     const counts = new Map<string, Candidate>();
     for (let i = 0; i < tokens.length - 1; i++) {
+      if (canMerge && !canMerge(vocab[tokens[i]].text, vocab[tokens[i + 1]].text)) continue;
       const key = tokens[i] + "," + tokens[i + 1];
       const c = counts.get(key);
       if (c) c.count++;

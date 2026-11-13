@@ -801,3 +801,97 @@ button.navLink {
   margin-right: 4px;
   border-radius: 3px;
 }
+
+/* Обучение из чата */
+
+.botBody {
+  min-width: 0;
+}
+
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.teach {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 6px 0 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.teach.done {
+  color: #22a06b;
+}
+
+.teach a {
+  color: var(--accent);
+}
+
+.teach form {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.teach input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+}
+
+.teach button {
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.teach button[type="submit"] {
+  background: var(--accent);
+  color: #fff;
+}
+
+.teach button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.flag {
+  margin: 2px 0 0 4px;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.flag:hover {
+  opacity: 1;
+  color: var(--accent);
+  text-decoration: underline;
+}

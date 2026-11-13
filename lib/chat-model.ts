@@ -12,7 +12,7 @@
 // «оценить вероятность каждого следующего токена и выбрать один».
 
 import { trainBpe, type VocabEntry } from "./bpe";
-import { fallbackAnswers, follows, groups } from "./chat-corpus";
+import { fallbackAnswers, follows, groups as builtIn, unknownWordAnswers, type CorpusGroup } from "./chat-corpus";
 
 export const START = -1;
 export const END = -2;
@@ -22,13 +22,20 @@ export const END_TEXT = "<конец>";
 /** Сколько последних токенов ответа модель учитывает */
 const MAX_CONTEXT = 4;
 const BPE_MERGES = 600;
-const MIN_SIMILARITY = 0.3;
+/** Ниже этого сходства модель честно говорит «не знаю», а не угадывает */
+export const MIN_SIMILARITY = 0.45;
+/** Если в сообщении есть незнакомое слово, совпадение должно быть почти точным */
+const MIN_SIMILARITY_WITH_UNKNOWN = 0.75;
+/** Ниже этого сходства ответ считается неуверенным и попадает в хранилище на проверку */
+const WEAK_SIMILARITY = 0.6;
 /** Насколько прошлое сообщение помогает выбрать тему */
 const TOPIC_BONUS = 0.2;
+/** Во сколько раз падает сходство, если главное слово сообщения в вопросе не встретилось */
+const KEY_MISS_PENALTY = 0.5;
 /** Бонус группе, которая понимает ответ на вопрос модели */
 const AFTER_BONUS = 0.35;
 /** Оценка группы «подходит любой ответ на вопрос модели» */
-const ANY_REPLY_SCORE = 0.85;
+const ANY_REPLY_SCORE = 0.72;
 /** Во сколько раз реже модель повторяет уже сказанное */
 const REPEAT_PENALTY = 0.15;
 
@@ -50,6 +57,8 @@ export type Model = {
   merges: Map<string, number>;
   groups: Group[];
   idf: Map<string, number>;
+  /** Основы всех слов, которые модель видела в вопросах и ответах */
+  knownStems: Set<string>;
   maxIdf: number;
   topicCount: number;
   answerCount: number;
@@ -89,8 +98,12 @@ export type SearchRow = {
   dot: number;
   /** «Длина» вопроса из примеров */
   qNorm: number;
-  /** Сходство = dot / (длина сообщения × длина вопроса) */
+  /** Сходство = dot / (длина сообщения × длина вопроса), с учётом штрафа за главное слово */
   sim: number;
+  /** Сходство до штрафа */
+  rawSim: number;
+  /** Главное слово сообщения в этом вопросе не встретилось */
+  keyMissed: boolean;
   bonus: number;
   bonusWhy: string;
   /** Итоговая оценка = сходство + бонус */
@@ -104,6 +117,8 @@ export type SearchRow = {
 /** Расчёт поиска похожих вопросов — для показа в панели */
 export type Search = {
   features: Feature[];
+  /** Главное слово сообщения — самое редкое из знакомых */
+  key?: string;
   /** «Длина» сообщения: корень из суммы квадратов весов признаков */
   uNorm: number;
   rows: SearchRow[];
@@ -114,6 +129,10 @@ export type Retrieval = {
   matches: Match[];
   /** Похожих вопросов не нашлось — используются общие ответы */
   fallback: boolean;
+  /** Совпадение есть, но слабое: модель отвечает неуверенно */
+  weak: boolean;
+  /** Незнакомые слова в сообщении */
+  strange: string[];
   active: ActiveAnswer[];
   /** Память на момент ответа (уже с тем, что узнали из этого сообщения) */
   memory: Memory;
@@ -151,12 +170,19 @@ export type Step = {
 };
 
 let cached: Model | null = null;
+let cachedKey = "";
 
-export function getModel(): Model {
-  if (cached) return cached;
+/**
+ * Собирает («обучает») модель. extra — то, чему модель научили вручную:
+ * эти вопросы и ответы добавляются к встроенным примерам, и словарь токенов учится заново.
+ */
+export function getModel(extra: { q: string[]; a: string[] }[] = []): Model {
+  const key = JSON.stringify(extra.map((g) => [g.q, g.a]));
+  if (cached && cachedKey === key) return cached;
+  const groups: CorpusGroup[] = [...builtIn, ...extra.map((g) => ({ q: g.q, a: g.a }))];
 
   const followTexts = Object.values(follows).flatMap((f) => f.q);
-  const text = [...groups.flatMap((g) => [...g.q, ...g.a]), ...followTexts, ...fallbackAnswers]
+  const text = [...groups.flatMap((g) => [...g.q, ...g.a]), ...followTexts, ...fallbackAnswers, ...unknownWordAnswers]
     .join("\n")
     .replace(/\{\w+\}/g, "");
 
@@ -181,6 +207,7 @@ export function getModel(): Model {
     merges,
     groups: [],
     idf: new Map(),
+    knownStems: new Set(),
     maxIdf: 1,
     topicCount: groups.filter((g) => !g.after && !g.lacks).length,
     answerCount: groups.reduce((s, g) => s + g.a.length, 0) + fallbackAnswers.length,
@@ -192,6 +219,7 @@ export function getModel(): Model {
   for (const q of allQuestions) for (const s of q) df.set(s, (df.get(s) ?? 0) + 1);
   for (const [s, n] of df) model.idf.set(s, Math.log(1 + allQuestions.length / n));
   model.maxIdf = Math.log(1 + allQuestions.length);
+  for (const w of text.toLowerCase().replace(/ё/g, "е").match(/[a-zа-я0-9]+/g) ?? []) model.knownStems.add(stemOf(w));
 
   model.groups = groups.map((g) => ({
     questions: g.q.map((q) => {
@@ -206,6 +234,7 @@ export function getModel(): Model {
   }));
 
   cached = model;
+  cachedKey = key;
   return model;
 }
 
@@ -239,11 +268,58 @@ export function encode(model: Model, text: string): Tok[] {
   }
 }
 
+/** Слова сообщения, которых нет ни в одном вопросе из примеров */
+export function unknownWords(model: Model, text: string): string[] {
+  const words = text.toLowerCase().replace(/ё/g, "е").match(/[a-zа-я0-9]+/g) ?? [];
+  return [...new Set(words)].filter((w) => !model.knownStems.has(stemOf(w)));
+}
+
+// Частые русские окончания, от длинных к коротким
+const ENDINGS = (
+  "иями ями ами ого его ому ему ыми ими аешь яешь ешь ишь ете ите ают яют уют ует ать ять ить еть " +
+  "ался алась ился илась аю яю ую ая яя ое ее ые ие ый ий ой юю ом ем ам ям ах ях ов ев ей ть ет ит ют ут ат ят " +
+  "а я о е ы и у ю ь й"
+).split(" ");
+
+/** Основа слова: отрезаем окончание, чтобы «токены» и «токен», «ночи» и «ночам» считались одним словом */
+function stemOf(word: string) {
+  if (!/[а-я]/.test(word)) return word;
+  for (const ending of ENDINGS) {
+    if (word.length - ending.length >= 3 && word.endsWith(ending)) return word.slice(0, -ending.length);
+  }
+  return word;
+}
+
+/** Слова, с которых обычно начинается новый вопрос или просьба, а не ответ */
+const NEW_TOPIC_STARTS =
+  "расскажи скажи объясни покажи напиши придумай посоветуй дай что как почему зачем кто где когда сколько какой какая какое какие знаешь умеешь можешь".split(
+    " ",
+  );
+
+/** Похоже ли сообщение на ответ на вопрос модели (а не на новый вопрос) */
+function looksLikeReply(text: string) {
+  const words: string[] = text.toLowerCase().match(/[a-zа-яё0-9]+/g) ?? [];
+  if (text.includes("?") || words.length === 0 || words.length > 8) return false;
+  // Прощание, благодарность и приветствие — тоже не ответ на вопрос
+  if (words.some((w) => ["пока", "спасибо", "привет", "свидания"].includes(w))) return false;
+  return !NEW_TOPIC_STARTS.includes(words[0]);
+}
+
+/** Незнакомые содержательные слова и числа — в том виде, как их написали */
+function strangeWords(model: Model, text: string, skip?: string): string[] {
+  const words = text.match(/[A-Za-zА-Яа-яЁё0-9]+/g) ?? [];
+  return [...new Set(words)].filter((w) => {
+    if (skip && w.toLowerCase() === skip.toLowerCase()) return false;
+    if (w.length < 4 && !/^[0-9]+$/.test(w)) return false;
+    return !model.knownStems.has(stemOf(w.toLowerCase().replace(/ё/g, "е")));
+  });
+}
+
 /** Признаки текста для поиска похожих вопросов */
 function stems(text: string): string[] {
   const words = text.toLowerCase().replace(/ё/g, "е").match(/[a-zа-я0-9]+/g) ?? [];
-  // Основа слова ловит разные окончания («токен» и «токены»), а слово целиком («=токен») даёт точному совпадению больший вес
-  return [...new Set(words.flatMap((w) => [w.length > 5 ? w.slice(0, 5) : w, "=" + w]))];
+  // Сравниваем по основам слов, чтобы «фильм», «фильмы» и «фильмов» считались одним и тем же
+  return [...new Set(words.map(stemOf))];
 }
 
 function weightOf(model: Model, stem: string) {
@@ -294,11 +370,12 @@ function findName(model: Model, text: string, askedName: boolean): string | unde
 }
 
 /** Подставляем в ответ то, что модель помнит. null — если нужного в памяти нет */
-function fill(model: Model, template: string, memory: Memory, userText: string): string | null {
+function fill(model: Model, template: string, memory: Memory, userText: string, unknown?: string): string | null {
   let ok = true;
   const text = template.replace(/\{(\w+)\}/g, (_, key: string) => {
     let value: string | undefined;
     if (key === "name") value = memory.name;
+    if (key === "unknown") value = unknown;
     if (key === "last") value = memory.last && shorten(memory.last, 40);
     if (key === "reply") {
       const reply = userText.trim().replace(/[.!?]+$/, "");
@@ -329,6 +406,14 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
   const topic = before.last ? stems(before.last) : [];
   const topicNorm = norm(model, topic);
 
+  // Главное слово сообщения: самое редкое из тех, что встречаются в вопросах примеров
+  let key: string | undefined;
+  for (const st of us) {
+    if (model.idf.has(st) && (key === undefined || weightOf(model, st) > weightOf(model, key))) key = st;
+  }
+  const replyLike = looksLikeReply(text);
+  const strange = strangeWords(model, text, newName);
+
   const scored = model.groups
     .map((group) => {
       const result = {
@@ -343,6 +428,8 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
         sim: 0,
         bonus: 0,
         bonusWhy: "",
+        rawSim: 0,
+        keyMissed: false,
       };
       if (group.lacks && memory[group.lacks]) return result;
       if (group.after && group.after !== pending?.tag) return result;
@@ -353,13 +440,19 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
       let topicSim = 0;
       for (const q of group.questions) {
         const c = compare(model, us, uNorm, q);
-        if (c.sim > sim) {
-          sim = c.sim;
+        // Совпали только общие слова («расскажи про…»), а главное — нет: скорее всего, тема другая
+        const strongest = Math.max(0, ...c.common.map((f) => f.weight));
+        const keyMissed = key !== undefined && strongest < 0.7 * weightOf(model, key);
+        const value = c.sim * (keyMissed ? KEY_MISS_PENALTY : 1);
+        if (value > sim) {
+          sim = value;
+          result.rawSim = c.sim;
+          result.keyMissed = keyMissed;
           result.question = q.text;
           result.common = c.common;
           result.dot = c.dot;
           result.qNorm = q.norm;
-          result.sim = c.sim;
+          result.sim = value;
         }
         topicSim = Math.max(topicSim, similarity(model, topic, topicNorm, q));
       }
@@ -367,13 +460,12 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
       if (group.after) {
         result.reply = true;
         if (group.questions.length === 0) {
-          // Сообщение с вопросительным знаком — скорее новый вопрос, чем ответ
-          result.score = text.includes("?") ? ANY_REPLY_SCORE / 2 : ANY_REPLY_SCORE;
+          // Новый вопрос или просьбу («расскажи…», «что…?») ответом не считаем
+          if (!replyLike) return result;
+          result.score = ANY_REPLY_SCORE;
           result.question = "любой ответ";
           result.bonus = result.score;
-          result.bonusWhy = text.includes("?")
-            ? "подходит любой ответ на вопрос модели, но в сообщении есть «?»"
-            : "подходит любой ответ на вопрос модели";
+          result.bonusWhy = "подходит любой ответ на вопрос модели";
         } else if (sim > 0) {
           result.score = sim + AFTER_BONUS;
           result.bonus = AFTER_BONUS;
@@ -402,6 +494,9 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
       if (item.score < cutoff) break;
     } else if (item.score < MIN_SIMILARITY) {
       break;
+    } else if (!item.reply && strange.length > 0 && item.sim < MIN_SIMILARITY_WITH_UNKNOWN) {
+      // Есть незнакомое слово, а совпадение неточное — лучше признаться, чем угадывать
+      break;
     }
     const answers = item.group.answers
       .map((a) => fill(model, a, memory, text))
@@ -422,7 +517,13 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
 
   let active: ActiveAnswer[];
   if (chosen.length === 0) {
-    active = toActive(fallbackAnswers, 1);
+    const aboutWord = strange.length
+      ? unknownWordAnswers
+          .map((a) => fill(model, a, memory, text, strange[0]))
+          .filter((a): a is string => a !== null)
+      : [];
+    active = toActive(aboutWord.length ? aboutWord : fallbackAnswers, 1);
+    if (aboutWord.length) used.push(`Слово «${strange[0]}» модели незнакомо, поэтому она не стала угадывать.`);
   } else {
     active = chosen.flatMap(({ item, answers }) =>
       answers.flatMap((a) => {
@@ -451,6 +552,7 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
 
   const search: Search = {
     features: us.map((name) => ({ name, weight: weightOf(model, name) })),
+    key,
     uNorm,
     rows: scored.slice(0, 6).map((x) => ({
       question: x.question,
@@ -458,6 +560,8 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
       dot: x.dot,
       qNorm: x.qNorm,
       sim: x.sim,
+      rawSim: x.rawSim,
+      keyMissed: x.keyMissed,
       bonus: x.bonus,
       bonusWhy: x.bonusWhy,
       score: x.score,
@@ -475,6 +579,8 @@ export function retrieve(model: Model, text: string, before: Memory): Retrieval 
       reply: item.reply,
     })),
     fallback: chosen.length === 0,
+    weak: chosen.length > 0 && !chosen[0].item.reply && chosen[0].item.sim < WEAK_SIMILARITY,
+    strange,
     active,
     memory,
     used,

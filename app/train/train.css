@@ -1,0 +1,258 @@
+.trainTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+
+.trainTop > div:first-child {
+  flex: 1;
+  min-width: 260px;
+}
+
+.topBtns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.navLink {
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.navLink:hover {
+  border-color: var(--accent);
+}
+
+.trainStats {
+  margin-top: 0;
+}
+
+.trainStats div {
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cardHead h2 {
+  margin: 0;
+}
+
+.card a {
+  color: var(--accent);
+}
+
+.ghost,
+.primary {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ghost {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+
+.ghost:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.items {
+  display: grid;
+  gap: 10px;
+}
+
+.item {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.itemHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.phraseTitle {
+  display: block;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.why {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+
+.why > div,
+.pairs > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.why .tokens {
+  padding: 0;
+  max-height: none;
+}
+
+.why .chip {
+  cursor: default;
+  font-size: 13px;
+}
+
+.tag {
+  flex-shrink: 0;
+  min-width: 124px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pairs {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.pairs .tag {
+  min-width: 62px;
+}
+
+.phrase {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.phrase.answer {
+  border-radius: 8px;
+}
+
+.teachForm {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.teachForm textarea {
+  flex: 1;
+  background: var(--card);
+  font: inherit;
+  font-size: 14px;
+}
+
+.teachForm.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: 12px;
+}
+
+.teachForm.two textarea {
+  width: 100%;
+  background: var(--bg);
+}
+
+.teachForm label span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.formFoot {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.savedNote {
+  color: #22a06b;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .teachForm.two {
+    grid-template-columns: 1fr;
+  }
+
+  .tag {
+    min-width: 100%;
+  }
+}
+
+.headBtns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.importNote {
+  margin: 0 0 12px;
+}
+
+.reason {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.reason.weak {
+  color: #b7791f;
+}
+
+.reason.flagged {
+  color: #c2410c;
+}
+
+form.item.teachForm.two textarea {
+  background: var(--card);
+}

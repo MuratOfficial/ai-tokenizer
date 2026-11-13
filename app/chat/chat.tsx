@@ -18,6 +18,7 @@ import {
   type Step,
   type Tok,
 } from "@/lib/chat-model";
+import { addUnknown, samePhrase, teach, useTraining, type UnknownReason } from "@/lib/training-store";
 import { Chip, show } from "../chip";
 
 const MAX_TOKENS = 60;
@@ -37,6 +38,8 @@ type BotMsg = {
   userTokens: Tok[];
   matches: Match[];
   fallback: boolean;
+  /** Совпадение слабое: ответ может быть невпопад */
+  weak: boolean;
   /** Что модель помнила, когда отвечала */
   memory: Memory;
   /** Как память повлияла на ответ */
@@ -70,7 +73,9 @@ function hue(id: number) {
 }
 
 export default function Chat() {
-  const model = useMemo(() => getModel(), []);
+  const training = useTraining();
+  // Модель пересобирается, когда её чему-то научили вручную
+  const model = useMemo(() => getModel(training.learned), [training.learned]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [live, setLive] = useState<Live | null>(null);
@@ -79,6 +84,9 @@ export default function Chat() {
   const [temp, setTemp] = useState(1);
   /** Какой токен готового ответа рассматриваем: [номер сообщения, номер шага] */
   const [inspect, setInspect] = useState<[number, number] | null>(null);
+
+  /** Номера ответов, которые пользователь отметил как неподходящие */
+  const [flagged, setFlagged] = useState<number[]>([]);
 
   const active = useRef<ActiveAnswer[]>([]);
   const memory = useRef<Memory>(emptyMemory());
@@ -104,10 +112,12 @@ export default function Chat() {
     if (!text || live) return;
     const r = retrieve(model, text, memory.current);
     active.current = r.active;
+    // Ответа нет — запоминаем фразу в хранилище, чтобы потом можно было обучить
+    if (r.fallback) addUnknown(text);
     setMessages([
       ...messages,
       { role: "user", text },
-      { role: "bot", userTokens: r.userTokens, matches: r.matches, fallback: r.fallback, memory: r.memory,
+      { role: "bot", userTokens: r.userTokens, matches: r.matches, fallback: r.fallback, weak: r.weak, memory: r.memory,
         used: r.used,
         search: r.search,
         material: r.active.map((a) => ({ text: a.text, weight: a.weight })).sort((a, b) => b.weight - a.weight),
@@ -130,6 +140,8 @@ export default function Chat() {
       .map((c) => c.text)
       .join("");
     memory.current = remember(bot.memory, user.text, botText);
+    // Неуверенный ответ тоже кладём в хранилище — на проверку
+    if (bot.weak) addUnknown(user.text, "weak", botText);
     setLive(null);
     inputRef.current?.focus();
   }
@@ -137,6 +149,7 @@ export default function Chat() {
   function reset() {
     memory.current = emptyMemory();
     setMessages([]);
+    setFlagged([]);
     setLive(null);
     setInspect(null);
   }
@@ -222,6 +235,9 @@ export default function Chat() {
               Новый разговор
             </button>
           )}
+          <Link href="/train" className="navLink">
+            Обучение{training.unknown.length > 0 && <span className="badge">{training.unknown.length}</span>}
+          </Link>
           <Link href="/" className="navLink">
             ← Токенизация
           </Link>
@@ -257,6 +273,7 @@ export default function Chat() {
               ) : (
                 <div key={mi} className="msg bot">
                   <div className="avatar">ИИ</div>
+                  <div className="botBody">
                   <div className="bubble">
                     {m.steps.map((s, si) => {
                       const c = s.cands[s.picked!];
@@ -282,6 +299,39 @@ export default function Chat() {
                       </span>
                     )}
                     {live && mi === lastBotIndex && <span className="caret" />}
+                  </div>
+                  {!(live && mi === lastBotIndex) &&
+                    (() => {
+                      const phrase = (messages[mi - 1] as UserMsg).text;
+                      const reason: UnknownReason | null = m.fallback
+                        ? "none"
+                        : flagged.includes(mi)
+                          ? "flagged"
+                          : m.weak
+                            ? "weak"
+                            : null;
+                      if (!reason) {
+                        return (
+                          <button
+                            type="button"
+                            className="flag"
+                            onClick={() => {
+                              addUnknown(phrase, "flagged", botText(m));
+                              setFlagged([...flagged, mi]);
+                            }}
+                          >
+                            Не тот ответ?
+                          </button>
+                        );
+                      }
+                      return (
+                        <Teach
+                          phrase={phrase}
+                          reason={reason}
+                          learned={training.learned.some((g) => g.q.some((q) => samePhrase(q, phrase)))}
+                        />
+                      );
+                    })()}
                   </div>
                 </div>
               ),
@@ -485,6 +535,61 @@ export default function Chat() {
   );
 }
 
+/** Под ответом «я не понял»: фраза сохранена, и модель можно сразу научить */
+function botText(m: BotMsg) {
+  return m.steps
+    .map((st) => st.cands[st.picked!])
+    .filter((c) => c.id !== END)
+    .map((c) => c.text)
+    .join("");
+}
+
+const TEACH_NOTE: Record<UnknownReason, string> = {
+  none: "Ответ не найден.",
+  weak: "Модель не уверена в этом ответе.",
+  flagged: "Отмечено: ответ не подошёл.",
+};
+
+function Teach({ phrase, reason, learned }: { phrase: string; reason: UnknownReason; learned: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [answer, setAnswer] = useState("");
+
+  if (learned) {
+    return <p className="teach done">✓ Выучено. Спросите ещё раз — теперь модель знает ответ.</p>;
+  }
+  return (
+    <div className="teach">
+      <span>
+        {TEACH_NOTE[reason]} Фраза сохранена в <Link href="/train">хранилище</Link>.
+      </span>
+      {open ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            teach([phrase], [answer]);
+          }}
+        >
+          <input
+            autoFocus
+            value={answer}
+            maxLength={200}
+            placeholder="Как нужно ответить?"
+            onChange={(e) => setAnswer(e.target.value)}
+            aria-label="Правильный ответ"
+          />
+          <button type="submit" disabled={!answer.trim()}>
+            Сохранить
+          </button>
+        </form>
+      ) : (
+        <button type="button" onClick={() => setOpen(true)}>
+          Научить отвечать
+        </button>
+      )}
+    </div>
+  );
+}
+
 type UsageRow = { index: number; history: number; message: number; output: number };
 
 function featureLabel(name: string) {
@@ -498,7 +603,7 @@ function SearchCalc({ search, fallback }: { search: Search; fallback: boolean })
       <summary>Как найдены совпадения — расчёт</summary>
 
       <p className="calcStep">
-        <b>а)</b> Сообщение превращается в признаки: основы слов и слова целиком. Чем реже признак
+        <b>а)</b> Сообщение превращается в признаки — основы слов без окончаний. Чем реже слово
         встречается в примерах, тем больше его вес.
       </p>
       <div className="feats">
@@ -512,6 +617,9 @@ function SearchCalc({ search, fallback }: { search: Search; fallback: boolean })
       <code className="calcLine">
         длина сообщения = √(сумма квадратов весов) = {search.uNorm.toFixed(2)}
       </code>
+      {search.key && (
+        <code className="calcLine">главное слово (самое редкое из знакомых) = «{search.key}»</code>
+      )}
 
       <p className="calcStep">
         <b>б)</b> Сообщение сравнивается с каждым вопросом из примеров: сходство = сумма квадратов
@@ -538,8 +646,14 @@ function SearchCalc({ search, fallback }: { search: Search; fallback: boolean })
               </div>
               <code className="calcLine">
                 сходство = {r.dot.toFixed(1)} ÷ ({search.uNorm.toFixed(2)} × {r.qNorm.toFixed(2)}) ={" "}
-                {r.sim.toFixed(2)}
+                {r.rawSim.toFixed(2)}
               </code>
+              {r.keyMissed && (
+                <code className="calcLine">
+                  совпали только частые слова, а главное («{search.key}») — нет: {r.rawSim.toFixed(2)} × 0.5 ={" "}
+                  {r.sim.toFixed(2)}
+                </code>
+              )}
             </>
           )}
           {r.bonus > 0.005 && (
@@ -557,8 +671,9 @@ function SearchCalc({ search, fallback }: { search: Search; fallback: boolean })
       ))}
 
       <p className="calcStep">
-        <b>в)</b> В работу идут вопросы с оценкой от 0.30, близкие к лучшему (не ниже 75% его
-        оценки). При почти точном совпадении остальные отбрасываются, а если сообщение понято как
+        <b>в)</b> В работу идут вопросы с оценкой от 0.45, близкие к лучшему (не ниже 75% его
+        оценки). Если в сообщении есть незнакомое слово, сходство должно быть не ниже 0.75 — иначе
+        модель отвечает «не знаю», а не угадывает. При почти точном совпадении остальные отбрасываются, а если сообщение понято как
         ответ на вопрос модели (↩), посторонние темы не подмешиваются.{fallback && " Здесь таких нет, поэтому модель берёт общие ответы «я не понял»."}
       </p>
     </details>
